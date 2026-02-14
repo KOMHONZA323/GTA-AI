@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GTA Style Map Creator</title>
+    <title>GTA Style Map Generator (Three.js)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         #canvas-container { width: 100vw; height: 100vh; }
         
+        /* UI Overlay */
         #ui-layer {
             position: absolute;
             top: 20px;
@@ -22,6 +23,9 @@
         }
 
         h2 { margin: 0 0 15px 0; font-size: 18px; color: #fbbf24; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .control-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-size: 14px; color: #ccc; }
         
         button {
             width: 100%;
@@ -39,410 +43,878 @@
 
         button:hover { background: #444; border-color: #fbbf24; }
         button.active { background: #fbbf24; color: #111; border-color: #fbbf24; }
+        
+        /* Button Group for Storage */
+        .btn-group { display: flex; gap: 5px; }
+        .btn-group button { text-align: center; margin-bottom: 0; }
 
-        .instruction {
-            font-size: 12px;
-            color: #aaa;
-            margin-top: 10px;
-            border-top: 1px solid #444;
-            padding-top: 10px;
+        .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; font-size: 12px; }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
+
+        /* Minimap Overlay (Stage 3 & 4 only) */
+        #minimap-ui {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            display: none; /* Hidden by default */
+            pointer-events: none;
+        }
+        .wanted-stars {
+            color: white;
+            font-size: 24px;
+            display: flex;
+            gap: 5px;
+            text-shadow: 0 0 5px black;
+        }
+        .star { color: #555; }
+        .star.active { color: white; }
+
+        /* Toast Notification */
+        #toast {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #fbbf24;
+            color: #111;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-weight: bold;
+            opacity: 0;
+            transition: opacity 0.5s;
+            pointer-events: none;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            z-index: 1000;
         }
     </style>
     <!-- Three.js from CDN -->
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://unpkg.com/three@0.182.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.182.0/examples/jsm/"
-        }
-    }
-    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
 
     <div id="canvas-container"></div>
+    <div id="toast">Map Saved!</div>
 
     <div id="ui-layer">
-        <h2>Map Creator</h2>
+        <h2>Map Architecture</h2>
         
         <div class="control-group">
-            <button id="btn-draw" class="active" onclick="setMode('draw')">✏️ Draw Car Mode</button>
-            <button id="btn-view" onclick="setMode('view')">👁️ View Mode</button>
-            <button onclick="regenerateMap()">🔄 Regenerate Map</button>
+            <label>Map Data:</label>
+            <div class="btn-group">
+                <button onclick="saveCity()">Save</button>
+                <button onclick="loadCity()">Load</button>
+                <button onclick="resetCity()">New</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Development Stage:</label>
+            <button id="btn-stage1" onclick="setStage(1)">Stage 1: Grid & Data</button>
+            <button id="btn-stage2" onclick="setStage(2)">Stage 2: Geometry Blockout</button>
+            <button id="btn-stage3" onclick="setStage(3)">Stage 3: GTA Style Polish</button>
+            <button id="btn-stage4" class="active" onclick="setStage(4)">Stage 4: Textured Detail</button>
+        </div>
+
+        <div class="control-group">
+            <label>Controls:</label>
+            <div style="font-size: 12px; color: #888;">
+                Left Click: Pan<br>
+                Scroll: Zoom<br>
+                Right Click: Rotate (Limited)
+            </div>
         </div>
         
-        <div class="instruction" id="instruction-text">
-            Click on the map to place a random car.
+        <div id="legend-container" class="legend">
+            <!-- Populated by JS -->
         </div>
     </div>
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    <div id="minimap-ui">
+        <div class="wanted-stars">
+            <span class="star active">★</span>
+            <span class="star active">★</span>
+            <span class="star">★</span>
+            <span class="star">★</span>
+            <span class="star">★</span>
+        </div>
+        <div style="color:white; font-size: 14px; font-weight: bold; margin-top:5px; text-shadow: 1px 1px 0 #000;">
+            DOWNTOWN
+        </div>
+    </div>
 
-        // --- CONFIGURATION ---
-        const CONFIG = {
-            gridSize: 40,
-            cellSize: 20,
-            buildingHeightScale: 3,
-            elevationHeight: 15,
-            colors: {
-                water: 0x99B3CC,
-                grass: 0xB8D9A9,
-                road: 0x2c3e50,
-                path: 0xDDDDDD,
-                highway: 0x555555,
-                carpark: 0x555555,
-                carparkLine: 0xFFFFFF,
-                building: 0xE0E0E0,
-                background: 0x87CEEB
+<script>
+    // --- CONFIGURATION & STATE ---
+    const CONFIG = {
+        gridSize: 80, 
+        cellSize: 10,
+        buildingHeightScale: 3,
+        elevationHeight: 15, // Height of highways
+        bridgeHeight: 3,      // Height of bridges
+        colors: {
+            water: 0x99B3CC,
+            grass: 0xB8D9A9,
+            road: 0xCCCCCC, 
+            path: 0xDDDDDD, 
+            highway: 0x555555, 
+            carpark: 0x555555, 
+            carparkLine: 0xFFFFFF,
+            building: 0xE0E0E0,
+            background: 0x88aad6 
+        },
+        stage1Colors: {
+            grid: 0x333333,
+            bg: 0x111111
+        }
+    };
+
+    let scene, camera, renderer, controls;
+    let mapGroup = new THREE.Group(); 
+    let iconGroup = new THREE.Group(); 
+    let cityData = []; 
+    let currentStage = 4;
+    let buildingMaterials = []; 
+    let roadMaterials = {}; 
+
+    // --- ASSET GENERATION ---
+    function createTexture(type) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64; canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        
+        if (type === 'player') {
+            ctx.translate(32, 32);
+            ctx.beginPath();
+            ctx.moveTo(0, -24);
+            ctx.lineTo(20, 24);
+            ctx.lineTo(0, 16);
+            ctx.lineTo(-20, 24);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#000000';
+            ctx.stroke();
+        } else if (type === 'home') {
+            ctx.fillStyle = '#4ADE80'; 
+            ctx.fillRect(10, 24, 44, 30);
+            ctx.beginPath();
+            ctx.moveTo(32, 10);
+            ctx.lineTo(58, 24);
+            ctx.lineTo(6, 24);
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(10, 24, 44, 30);
+        } else if (type === 'mission') {
+            ctx.fillStyle = '#FBBF24'; 
+            ctx.beginPath();
+            ctx.arc(32, 32, 28, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.font = 'bold 36px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('M', 32, 34);
+        }
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.minFilter = THREE.LinearFilter;
+        return tex;
+    }
+
+    function createRoadTexture(type) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128; canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = '#444444';
+        ctx.fillRect(0,0,128,128);
+
+        for(let i=0; i<400; i++) {
+            ctx.fillStyle = Math.random() > 0.5 ? '#555' : '#333';
+            ctx.fillRect(Math.random()*128, Math.random()*128, 2, 2);
+        }
+
+        if (type === 'highway') {
+            // One Way 2 Lanes
+            ctx.fillStyle = '#EBC934'; // Yellow (Inner)
+            ctx.fillRect(0, 0, 128, 4); 
+            ctx.fillStyle = '#FFFFFF'; // White (Outer)
+            ctx.fillRect(0, 124, 128, 4); 
+            ctx.fillStyle = '#FFFFFF';
+            for(let i=0; i<128; i+=16) {
+                ctx.fillRect(i, 62, 12, 4); 
             }
+        } else if (type === 'horizontal') {
+            ctx.fillStyle = '#EBC934'; 
+            ctx.fillRect(0, 60, 128, 3);
+            ctx.fillRect(0, 65, 128, 3);
+            ctx.fillStyle = '#FFFFFF'; 
+            ctx.fillRect(0, 10, 128, 2);
+            ctx.fillRect(0, 116, 128, 2);
+        } else if (type === 'vertical') {
+            ctx.fillStyle = '#EBC934';
+            ctx.fillRect(60, 0, 3, 128);
+            ctx.fillRect(65, 0, 3, 128);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(10, 0, 2, 128);
+            ctx.fillRect(116, 0, 2, 128);
+        } else if (type === 'intersection') {
+            ctx.fillStyle = '#4a4a4a'; // Clean Asphalt
+            ctx.fillRect(10, 10, 108, 108);
+        }
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.LinearMipMapLinearFilter;
+        return tex;
+    }
+
+    function createBuildingTexture(style) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128; canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+
+        if (style === 'office') {
+            ctx.fillStyle = '#88ccff'; 
+            ctx.fillRect(0,0,128,128);
+            ctx.fillStyle = '#5599cc'; 
+            for(let i=0; i<4; i++) {
+                for(let j=0; j<8; j++) {
+                    ctx.fillRect(i*32 + 2, j*16 + 2, 28, 12);
+                }
+            }
+        } else if (style === 'brick') {
+            ctx.fillStyle = '#a05040';
+            ctx.fillRect(0,0,128,128);
+            ctx.fillStyle = '#402010'; 
+            for(let i=0; i<4; i++) {
+                for(let j=0; j<4; j++) {
+                    ctx.fillRect(i*32 + 8, j*32 + 8, 16, 20);
+                }
+            }
+        } else if (style === 'concrete') {
+            ctx.fillStyle = '#999999';
+            ctx.fillRect(0,0,128,128);
+            ctx.strokeStyle = '#777777';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for(let j=0; j<128; j+=16) {
+                ctx.moveTo(0, j); ctx.lineTo(128, j);
+            }
+            ctx.stroke();
+            ctx.fillStyle = '#333';
+            for(let i=0; i<8; i++) {
+                 ctx.fillRect(Math.random()*100, Math.random()*100, 10, 5);
+            }
+        }
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.magFilter = THREE.NearestFilter; 
+        return tex;
+    }
+
+    const textures = {
+        player: createTexture('player'),
+        home: createTexture('home'),
+        mission: createTexture('mission')
+    };
+
+    function init() {
+        const container = document.getElementById('canvas-container');
+
+        buildingMaterials = [
+            new THREE.MeshLambertMaterial({ map: createBuildingTexture('office') }),
+            new THREE.MeshLambertMaterial({ map: createBuildingTexture('brick') }),
+            new THREE.MeshLambertMaterial({ map: createBuildingTexture('concrete') })
+        ];
+
+        roadMaterials = {
+            horizontal: new THREE.MeshLambertMaterial({ map: createRoadTexture('horizontal') }),
+            vertical: new THREE.MeshLambertMaterial({ map: createRoadTexture('vertical') }),
+            intersection: new THREE.MeshLambertMaterial({ map: createRoadTexture('intersection') }),
+            highway: new THREE.MeshLambertMaterial({ map: createRoadTexture('highway') }),
+            generic: new THREE.MeshLambertMaterial({ color: CONFIG.colors.road })
         };
 
-        let scene, camera, renderer, controls;
-        let cityData = [];
-        let mapGroup = new THREE.Group();
-        let raycaster = new THREE.Raycaster();
-        let mouse = new THREE.Vector2();
-        let currentMode = 'draw';
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(CONFIG.colors.background);
 
-        // --- ASSET CREATION ---
-        function createMaterial(color, options = {}) {
-            return new THREE.MeshStandardMaterial({
-                color: color,
-                metalness: options.metalness || 0,
-                roughness: options.roughness || 0.5,
-                ...options
-            });
+        const aspect = window.innerWidth / window.innerHeight;
+        const frustumSize = 900; 
+        camera = new THREE.OrthographicCamera(
+            frustumSize * aspect / -2, frustumSize * aspect / 2,
+            frustumSize / 2, frustumSize / -2,
+            1, 2000
+        );
+        camera.position.set(200, 500, 200); 
+        camera.lookAt(0, 0, 0);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.mouseButtons = {
+            LEFT: THREE.MOUSE.PAN,
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: THREE.MOUSE.ROTATE
+        };
+        controls.zoomSpeed = 1.2;
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(100, 300, 50);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.camera.left = -500;
+        dirLight.shadow.camera.right = 500;
+        dirLight.shadow.camera.top = 500;
+        dirLight.shadow.camera.bottom = -500;
+        scene.add(dirLight);
+
+        // Auto load if exists, otherwise generate
+        if(localStorage.getItem('gta_map_data')) {
+            loadCity();
+        } else {
+            generateCityData();
+            setStage(4); 
         }
 
-        function createBuilding(position, size, color) {
-            const group = new THREE.Group();
-            const [width, height, depth] = size;
+        window.addEventListener('resize', onWindowResize, false);
+        animate();
+    }
 
-            const bodyGeo = new THREE.BoxGeometry(width, height, depth);
-            const bodyMat = createMaterial(color, { roughness: 0.7, metalness: 0.1 });
-            const body = new THREE.Mesh(bodyGeo, bodyMat);
-            body.position.set(0, height / 2, 0);
-            body.castShadow = true;
-            body.receiveShadow = true;
-            group.add(body);
+    // --- STORAGE FUNCTIONS ---
+    function showToast(msg) {
+        const t = document.getElementById('toast');
+        t.innerText = msg;
+        t.style.opacity = '1';
+        setTimeout(() => t.style.opacity = '0', 2000);
+    }
 
-            // Simple windows for performance
-            const windowGeo = new THREE.PlaneGeometry(1, 1);
-            const windowMatLit = createMaterial(0xFFE4B5, { emissive: 0xFFA500, emissiveIntensity: 0.5 });
-            const windowMatDark = createMaterial(0x87CEEB, { emissive: 0x4A90D9, emissiveIntensity: 0.2 });
+    window.saveCity = function() {
+        try {
+            const dataStr = JSON.stringify(cityData);
+            localStorage.setItem('gta_map_data', dataStr);
+            showToast("Map Saved!");
+        } catch(e) {
+            console.error(e);
+            showToast("Error Saving Map");
+        }
+    };
 
-            // Front only for simplicity in this editor
-            for (let row = 0; row < Math.floor(height/3); row++) {
-                for (let col = 0; col < Math.floor(width/3); col++) {
-                    const mesh = new THREE.Mesh(windowGeo, Math.random() > 0.5 ? windowMatLit : windowMatDark);
-                    mesh.position.set(-width/2 + 2 + col*3, 2 + row*3, depth/2 + 0.01);
-                    group.add(mesh);
-                }
+    window.loadCity = function() {
+        const dataStr = localStorage.getItem('gta_map_data');
+        if(!dataStr) {
+            showToast("No Saved Map Found");
+            return;
+        }
+        cityData = JSON.parse(dataStr);
+        setStage(currentStage);
+        showToast("Map Loaded!");
+    };
+
+    window.resetCity = function() {
+        generateCityData();
+        setStage(currentStage);
+        showToast("New Map Generated");
+    };
+
+    function generateCityData() {
+        cityData = [];
+        const size = CONFIG.gridSize;
+        const center = Math.floor(size / 2);
+
+        // 1. Initialize Base
+        for(let x=0; x<size; x++) {
+            cityData[x] = [];
+            for(let z=0; z<size; z++) {
+                cityData[x][z] = { type: 'grass', height: 0, isElevated: false, rampLevel: 0, isWater: false };
             }
-
-            // Roof
-            const roof = new THREE.Mesh(
-                new THREE.BoxGeometry(width + 0.5, 0.5, depth + 0.5),
-                createMaterial(0x2c3e50)
-            );
-            roof.position.set(0, height + 0.25, 0);
-            group.add(roof);
-
-            group.position.set(...position);
-            return group;
         }
 
-        function createCar(position, color, direction = 1) {
-            const group = new THREE.Group();
-
-            const bodyGeo = new THREE.BoxGeometry(1.5, 0.4, 0.8);
-            const bodyMat = createMaterial(color, { metalness: 0.6, roughness: 0.4 });
-            const body = new THREE.Mesh(bodyGeo, bodyMat);
-            body.position.set(0, 0.3, 0);
-            body.castShadow = true;
-            group.add(body);
-
-            const topGeo = new THREE.BoxGeometry(0.8, 0.35, 0.75);
-            const top = new THREE.Mesh(topGeo, bodyMat);
-            top.position.set(0, 0.6, 0);
-            top.castShadow = true;
-            group.add(top);
-
-            // Windows
-            const windowMat = createMaterial(0x87CEEB, { metalness: 0.9, roughness: 0.1, transparent: true, opacity: 0.8 });
-            const glass = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.2, 0.6), windowMat);
-            glass.position.set(0, 0.65, 0);
-            group.add(glass);
-
-            // Wheels
-            const wheelGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.12, 16);
-            const wheelMat = createMaterial(0x1a1a1a);
-            [[-0.5, 0.12, 0.4], [-0.5, 0.12, -0.4], [0.5, 0.12, 0.4], [0.5, 0.12, -0.4]].forEach(pos => {
-                const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-                wheel.position.set(...pos);
-                wheel.rotation.x = Math.PI / 2;
-                group.add(wheel);
-            });
-
-            group.position.set(...position);
-            group.rotation.y = direction > 0 ? 0 : Math.PI;
-            return group;
+        // 2. Generate River
+        for(let x=0; x<size; x++) {
+            const z = Math.floor(center + Math.sin(x * 0.1) * (size * 0.35));
+            const width = Math.floor(Math.random() * 2) + 4; 
+            for(let w=-width; w<=width; w++) {
+                if(z+w >= 0 && z+w < size) {
+                     cityData[x][z+w] = { type: 'water', height: 0, isWater: true }; 
+                }
+            }
         }
 
-        function createRoadSegment(position, width, length, isHighway) {
-            const group = new THREE.Group();
-            const color = isHighway ? 0x555555 : 0x2c3e50;
-            const geo = new THREE.PlaneGeometry(length, width);
-            const mat = createMaterial(color, { roughness: 0.9 });
-            const mesh = new THREE.Mesh(geo, mat);
-            mesh.rotation.x = -Math.PI / 2;
-            mesh.receiveShadow = true;
-            group.add(mesh);
-
-            if (!isHighway) {
-                const lineGeo = new THREE.PlaneGeometry(length * 0.6, 0.15);
-                const lineMat = createMaterial(0xf1c40f);
-                const line = new THREE.Mesh(lineGeo, lineMat);
-                line.rotation.x = -Math.PI / 2;
-                line.position.set(0, 0.01, 0);
-                group.add(line);
+        // 2.5 Landfill for Main Street
+        for(let z = 0; z < size; z++) {
+            for(let x = center - 2; x <= center + 3; x++) {
+                if(x >= 0 && x < size) {
+                    cityData[x][z].type = 'grass';
+                    cityData[x][z].isWater = false;
+                }
             }
-            group.position.set(...position);
-            return group;
         }
 
-        function createStreetLamp(position) {
-            const group = new THREE.Group();
-            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, 6), createMaterial(0x34495e));
-            pole.position.set(0, 3, 0);
-            group.add(pole);
-            const light = new THREE.Mesh(new THREE.SphereGeometry(0.3), createMaterial(0xfff8dc, { emissive: 0xfff8dc }));
-            light.position.set(0, 6, 0);
-            group.add(light);
-            group.position.set(...position);
-            return group;
+        function getNeighborType(x, z) {
+            if(x<0||x>=size||z<0||z>=size) return null;
+            return cityData[x][z].type;
         }
 
-        // --- MAP GENERATION ---
-        function generateCityData() {
-            cityData = [];
-            const size = CONFIG.gridSize;
-            const center = Math.floor(size / 2);
+        function setMedian(x, z) {
+            if(x < 0 || x >= size || z < 0 || z >= size) return;
+            cityData[x][z] = { 
+                type: 'median', 
+                height: 0, 
+                isElevated: true, 
+                rampLevel: 0
+            };
+        }
 
-            for(let x=0; x<size; x++) {
-                cityData[x] = [];
-                for(let z=0; z<size; z++) {
-                    cityData[x][z] = { type: 'grass', height: 0, isElevated: false };
+        function setRoad(x, z, isHighway, rampLevel = 0, isHorizontal = false, highwaySide = 'none', highwaySection = '') {
+            if(x < 0 || x >= size || z < 0 || z >= size) return;
+            const wasWater = cityData[x][z].isWater;
+            
+            if (cityData[x][z].isHighway && !isHighway) {
+                cityData[x][z].hasUnderpass = true;
+                return;
+            }
+
+            cityData[x][z] = { 
+                type: 'road', 
+                height: 0, 
+                isHighway: isHighway,
+                highwaySide: highwaySide, 
+                highwaySection: highwaySection, 
+                isElevated: false, 
+                isBridge: false,
+                isRamp: false,
+                rampLevel: rampLevel, 
+                isHorizontal: isHorizontal,
+                isBridgeRamp: false,
+                isIntersection: false,
+                stopLineDir: null,
+                isWaterCrossing: wasWater,
+                hasUnderpass: false,
+                rampTargetHeight: 0
+            };
+        }
+
+        // 3. Ring Road Highway (Concentric Rings Strategy)
+        const margin = 10;
+        const min = margin;
+        const max = size - margin;
+        
+        // Ring 1: Outer Loop (Road)
+        for(let i=min; i<=max; i++) {
+            setRoad(i, min, true, 0, true, 'outer', 'top');      
+            setRoad(i, max, true, 0, true, 'outer', 'bottom');      
+            setRoad(min, i, true, 0, false, 'outer', 'left');     
+            setRoad(max, i, true, 0, false, 'outer', 'right');     
+        }
+        
+        // Ring 2: Median Loop (Median)
+        for(let i=min+1; i<=max-1; i++) {
+            setMedian(i, min+1);
+            setMedian(i, max-1);
+            setMedian(min+1, i);
+            setMedian(max-1, i);
+        }
+
+        // Ring 3: Inner Loop (Road)
+        for(let i=min+2; i<=max-2; i++) {
+            setRoad(i, min+2, true, 0, true, 'inner', 'top');
+            setRoad(i, max-2, true, 0, true, 'inner', 'bottom');
+            setRoad(min+2, i, true, 0, false, 'inner', 'left');
+            setRoad(max-2, i, true, 0, false, 'inner', 'right');
+        }
+
+        // 3.5 Fix Highway Corners (Explicitly set corner tiles to Intersections)
+        // Outer Corners
+        cityData[min][min].isIntersection = true;
+        cityData[max][min].isIntersection = true;
+        cityData[min][max].isIntersection = true;
+        cityData[max][max].isIntersection = true;
+        // Inner Corners
+        cityData[min+2][min+2].isIntersection = true;
+        cityData[max-2][min+2].isIntersection = true;
+        cityData[min+2][max-2].isIntersection = true;
+        cityData[max-2][max-2].isIntersection = true;
+
+        // 4. Interchanges
+        function createInterchange(startX, startZ, dirX, dirZ, isHorizontal) {
+            for(let i=1; i<=4; i++) {
+                const rx = startX + (dirX * i);
+                const rz = startZ + (dirZ * i);
+                setRoad(rx, rz, false, i, isHorizontal); 
+            }
+        }
+        createInterchange(center, min + 2, 0, 1, false); 
+        createInterchange(center, max - 2, 0, -1, false); 
+        createInterchange(min + 2, center, 1, 0, true);
+        createInterchange(max - 2, center, -1, 0, true);
+
+        // 5. Main Street
+        const innerMin = min + 7;
+        const innerMax = max - 7;
+        const blockSize = 14;
+
+        for(let z = 0; z < size; z++) {
+            setRoad(center, z, false, 0, false);      
+            setRoad(center + 1, z, false, 0, false); 
+        }
+
+        // 6. Branching Streets
+        for(let z = innerMin; z <= innerMax; z += blockSize) {
+            for(let x = innerMin; x <= innerMax; x++) {
+                setRoad(x, z, false, 0, true);
+            }
+        }
+        for(let x = innerMin + blockSize; x < innerMax; x += blockSize) {
+            if (x === center || x === center+1) continue; 
+            for(let z = innerMin; z <= innerMax; z++) {
+                setRoad(x, z, false, 0, false);
+            }
+        }
+
+        // 7. Post-Process
+        const dirs = [{dx:1, dz:0}, {dx:-1, dz:0}, {dx:0, dz:1}, {dx:0, dz:-1}];
+
+        // Pass A: Highways
+        for(let x=0; x<size; x++) {
+            for(let z=0; z<size; z++) {
+                const cell = cityData[x][z];
+                if(cell.type === 'road' && cell.isHighway) {
+                    if(cell.rampLevel === 0) cell.isElevated = true;
+                    else cell.isRamp = true; 
                 }
             }
+        }
 
-            // River
-            for(let x=0; x<size; x++) {
-                const z = Math.floor(center + Math.sin(x * 0.1) * (size * 0.35));
-                for(let w=-2; w<=2; w++) {
-                    if(z+w >= 0 && z+w < size) cityData[x][z+w] = { type: 'water' };
+        // Pass B: Bridges
+        for(let x=0; x<size; x++) {
+            for(let z=0; z<size; z++) {
+                const cell = cityData[x][z];
+                if(cell.type === 'road' && !cell.isHighway && cell.isWaterCrossing) {
+                    cell.isBridge = true;
                 }
             }
+        }
 
-            function setRoad(x, z, isHighway, elevated=false) {
-                if(x < 0 || x >= size || z < 0 || z >= size) return;
-                const isWater = cityData[x][z].type === 'water';
-                cityData[x][z] = {
-                    type: 'road',
-                    isHighway,
-                    isElevated: elevated || (isHighway && !isWater), // Elevated highway logic simplification
-                    isBridge: isWater
-                };
-            }
-
-            // Highway Ring
-            const margin = 4;
-            for(let i=margin; i<=size-margin; i++) {
-                setRoad(i, margin, true, true);
-                setRoad(i, size-margin, true, true);
-                setRoad(margin, i, true, true);
-                setRoad(size-margin, i, true, true);
-            }
-
-            // Streets
-            for(let z=margin+2; z<=size-margin-2; z+=4) {
-                for(let x=margin+2; x<=size-margin-2; x++) {
-                    setRoad(x, z, false);
+        // Pass C: Intersections
+        for(let x=0; x<size; x++) {
+            for(let z=0; z<size; z++) {
+                const cell = cityData[x][z];
+                if (cell.type === 'road' && !cell.isHighway) {
+                    let connections = 0;
+                    for(let d of dirs) {
+                        const nx = x+d.dx; const nz = z+d.dz;
+                        if(nx>=0 && nx<size && nz>=0 && nz<size) {
+                            if(cityData[nx][nz].type === 'road') connections++;
+                        }
+                    }
+                    if (connections > 2) cell.isIntersection = true;
                 }
             }
-            for(let x=margin+2; x<=size-margin-2; x+=4) {
-                for(let z=margin+2; z<=size-margin-2; z++) {
-                    setRoad(x, z, false);
+        }
+
+        // Pass D: Elevate Junctions
+        for(let x=0; x<size; x++) {
+            for(let z=0; z<size; z++) {
+                const cell = cityData[x][z];
+                if(cell.isIntersection && !cell.isBridge) {
+                    let nextToBridge = false;
+                    for(let d of dirs) {
+                        const nx = x+d.dx; const nz = z+d.dz;
+                        if(nx>=0 && nx<size && nz>=0 && nz<size) {
+                            if(cityData[nx][nz].isBridge) {
+                                nextToBridge = true; break;
+                            }
+                        }
+                    }
+                    if(nextToBridge) cell.isBridge = true; 
                 }
             }
+        }
 
-            // Buildings
-            for(let x=0; x<size; x++) {
-                for(let z=0; z<size; z++) {
-                    if(cityData[x][z].type === 'grass' && Math.random() > 0.3) {
-                        // Check adjacency
-                        let nearRoad = false;
-                        [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dz]) => {
-                            if(x+dx>=0 && x+dx<size && z+dz>=0 && z+dz<size && cityData[x+dx][z+dz].type === 'road') nearRoad = true;
-                        });
+        // Pass E: Bridge Ramps
+        for(let x=0; x<size; x++) {
+            for(let z=0; z<size; z++) {
+                const cell = cityData[x][z];
+                if (cell.type === 'road' && !cell.isHighway && !cell.isBridge) {
+                     for(let d of dirs) {
+                          const nx = x+d.dx; const nz = z+d.dz;
+                          if(nx>=0 && nx<size && nz>=0 && nz<size) {
+                              const neighbor = cityData[nx][nz];
+                              let targetH = 0;
+                              if (neighbor.isBridge) targetH = CONFIG.bridgeHeight;
+                              else if (neighbor.isElevated) targetH = CONFIG.elevationHeight;
+                              
+                              if (targetH > 0) {
+                                  cell.isBridgeRamp = true;
+                                  cell.rampDir = d;
+                                  cell.rampTargetHeight = targetH;
+                                  break; 
+                              }
+                          }
+                      }
+                }
+            }
+        }
 
-                        if(nearRoad) {
-                            cityData[x][z] = {
-                                type: 'building',
-                                height: 2 + Math.random() * 8,
-                                color: [0xe74c3c, 0x3498db, 0xf1c40f][Math.floor(Math.random()*3)]
-                            };
+        // Pass F: Stop Lines
+        for(let x=0; x<size; x++) {
+            for(let z=0; z<size; z++) {
+                const cell = cityData[x][z];
+
+                if (cell.type === 'road' && !cell.isHighway && !cell.isBridge && !cell.isBridgeRamp && !cell.isIntersection) {
+                    for(let d of dirs) {
+                        const nx = x+d.dx; const nz = z+d.dz;
+                        if(nx>=0 && nx<size && nz>=0 && nz<size) {
+                            const neighbor = cityData[nx][nz];
+                            if (neighbor.isIntersection && !neighbor.isBridge) {
+                                cell.stopLineDir = d;
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
 
-        function renderMap() {
-            scene.remove(mapGroup);
-            mapGroup = new THREE.Group();
+        // Buildings, Paths, Carparks (same as before)
 
-            const ground = new THREE.Mesh(
-                new THREE.PlaneGeometry(1000, 1000),
-                new THREE.MeshStandardMaterial({ color: CONFIG.colors.grass })
-            );
-            ground.rotation.x = -Math.PI / 2;
-            ground.position.y = -0.1;
-            ground.name = "Ground"; // For Raycasting
-            mapGroup.add(ground);
+        for(let x=innerMin; x<=innerMax; x++) { for(let z=innerMin; z<=innerMax; z++) { if(cityData[x][z].type === 'grass') { if (x % (blockSize/2) === 0 || z % (blockSize/2) === 0) { cityData[x][z] = { type: 'path', height: 0 }; } } } }
 
-            for (let x = 0; x < CONFIG.gridSize; x++) {
-                for (let z = 0; z < CONFIG.gridSize; z++) {
-                    const cell = cityData[x][z];
-                    const px = (x - CONFIG.gridSize / 2) * CONFIG.cellSize;
-                    const pz = (z - CONFIG.gridSize / 2) * CONFIG.cellSize;
+        for(let x=innerMin; x<=innerMax; x++) { for(let z=innerMin; z<=innerMax; z++) { if(cityData[x][z].type === 'grass') { const neighbors = [{dx:1, dz:0}, {dx:-1, dz:0}, {dx:0, dz:1}, {dx:0, dz:-1}]; let nearRoad = false; for(let n of neighbors) { let t = getNeighborType(x+n.dx, z+n.dz); if(t === 'road') nearRoad = true; } if(nearRoad && Math.random() < 0.08) { cityData[x][z] = { type: 'carpark', height: 0 }; } } } }
 
-                    if (cell.type === 'road') {
-                         const road = createRoadSegment([px, 0.05, pz], CONFIG.cellSize, CONFIG.cellSize, cell.isHighway);
-                         if (cell.isElevated) {
-                             road.position.y = CONFIG.elevationHeight;
-                             const pillar = new THREE.Mesh(
-                                 new THREE.CylinderGeometry(1, 1, CONFIG.elevationHeight, 8),
-                                 createMaterial(0x7f8c8d)
-                             );
-                             pillar.position.set(px, CONFIG.elevationHeight/2, pz);
-                             mapGroup.add(pillar);
-                         }
-                         mapGroup.add(road);
-                    } else if (cell.type === 'building') {
-                         const size = [CONFIG.cellSize * 0.8, cell.height * CONFIG.buildingHeightScale, CONFIG.cellSize * 0.8];
-                         const building = createBuilding([px, 0, pz], size, cell.color);
-                         mapGroup.add(building);
-                    } else if (cell.type === 'water') {
-                        const water = new THREE.Mesh(
-                            new THREE.PlaneGeometry(CONFIG.cellSize, CONFIG.cellSize),
-                            createMaterial(CONFIG.colors.water, { metalness: 0.8, roughness: 0.2 })
-                        );
-                        water.rotation.x = -Math.PI / 2;
-                        water.position.set(px, 0.02, pz);
-                        mapGroup.add(water);
+        for(let x=0; x<size; x++) { for(let z=0; z<size; z++) { if (x < min || x > max || z < min || z > max) { if (cityData[x][z].type !== 'water') cityData[x][z] = { type: 'grass', height: 0 }; continue; } if(cityData[x][z].type !== 'grass') continue; let hasAccess = false; const neighbors = [{dx:1, dz:0}, {dx:-1, dz:0}, {dx:0, dz:1}, {dx:0, dz:-1}]; for(let n of neighbors) { let nx = x + n.dx; let nz = z + n.dz; if(nx>=0 && nx<size && nz>=0 && nz<size) { const t = cityData[nx][nz].type; if(t === 'road' || t === 'path' || t === 'carpark') { hasAccess = true; break; } } } if(hasAccess) { const dist = Math.sqrt(Math.pow(x-center, 2) + Math.pow(z-center, 2)); const rand = Math.random(); let h = 0; let style = 1; if(dist < size * 0.15) { h = 15 + Math.random() * 30; style = 0; } else if (dist < size * 0.35) { h = 5 + Math.random() * 10; style = (rand > 0.5) ? 0 : 2; } else { h = 2 + Math.random() * 4; style = 1; } if (rand > 0.15) cityData[x][z] = { type: 'building', height: h, style: style }; } } }
+    }
+
+    // --- STAGE RENDERERS ---
+
+    function clearMap() {
+        if(mapGroup) scene.remove(mapGroup);
+        if(iconGroup) scene.remove(iconGroup);
+        mapGroup = new THREE.Group();
+        iconGroup = new THREE.Group();
+        scene.add(mapGroup);
+        scene.add(iconGroup);
+    }
+
+    function renderStage1() {
+        scene.background = new THREE.Color(CONFIG.stage1Colors.bg);
+        const size = CONFIG.gridSize * CONFIG.cellSize;
+        mapGroup.add(new THREE.GridHelper(size, CONFIG.gridSize, 0x444444, 0x222222));
+
+        document.getElementById('legend-container').innerHTML = `<div class="legend-item" style="color:white">Stage 1: Wireframe Data</div>`;
+        document.getElementById('minimap-ui').style.display = 'none';
+    }
+
+    function renderStage2() {
+        scene.background = new THREE.Color(0xdddddd); 
+
+        document.getElementById('legend-container').innerHTML = `<div class="legend-item">Stage 2: Geometry Blockout</div>`;
+        document.getElementById('minimap-ui').style.display = 'none';
+    }
+
+    function renderPolishStage(isTextured) {
+        scene.background = new THREE.Color(CONFIG.colors.background);
+
+        const groundSize = CONFIG.gridSize * CONFIG.cellSize;
+
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(groundSize, groundSize), new THREE.MeshLambertMaterial({ color: CONFIG.colors.grass }));
+        ground.rotation.x = -Math.PI / 2; ground.position.y = -2; ground.receiveShadow = true; mapGroup.add(ground);
+
+        const pillarGeo = new THREE.CylinderGeometry(2, 2, CONFIG.elevationHeight, 8);
+        const pillarMat = new THREE.MeshLambertMaterial({ color: 0x444444 });
+        const bridgePillarGeo = new THREE.CylinderGeometry(1.5, 1.5, 4, 8); 
+        const stopLineMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+        const treeGeo = new THREE.ConeGeometry(2, 6, 8);
+        const treeMat = new THREE.MeshLambertMaterial({ color: 0x2d5a27 });
+
+        for(let x=0; x<CONFIG.gridSize; x++) {
+            for(let z=0; z<CONFIG.gridSize; z++) {
+                const cell = cityData[x][z];
+                const posX = (x - CONFIG.gridSize/2) * CONFIG.cellSize;
+                const posZ = (z - CONFIG.gridSize/2) * CONFIG.cellSize;
+
+                if(cell.type === 'building') {
+                    const h = cell.height * CONFIG.buildingHeightScale;
+                    const w = CONFIG.cellSize * 0.85;
+
+                    let mat = isTextured ? buildingMaterials[cell.style || 0] : new THREE.MeshLambertMaterial({ color: CONFIG.colors.building });
+                    if(isTextured && mat.map) mat.map.repeat.set(1, Math.max(1, Math.floor(h/10)));
+                    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), mat);
+                    mesh.position.set(posX, h/2, posZ); mesh.castShadow = true; mesh.receiveShadow = true; mapGroup.add(mesh);
+
+                    if (!isTextured) { const edges = new THREE.EdgesGeometry(mesh.geometry); mesh.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xaaaaaa }))); }
+                } else if (cell.type === 'median') {
+
+                    const mesh = new THREE.Mesh(new THREE.BoxGeometry(CONFIG.cellSize, 1, CONFIG.cellSize), new THREE.MeshLambertMaterial({ color: CONFIG.colors.grass }));
+                    mesh.position.set(posX, CONFIG.elevationHeight, posZ); mapGroup.add(mesh);
+
+                    const tree = new THREE.Mesh(treeGeo, treeMat); tree.position.set(posX, CONFIG.elevationHeight + 3, posZ); mapGroup.add(tree);
+
+                    if (x%3===0 && z%3===0) { const pillar = new THREE.Mesh(pillarGeo, pillarMat); pillar.position.set(posX, CONFIG.elevationHeight/2, posZ); mapGroup.add(pillar); }
+                    if (cell.hasUnderpass) {
+
+                        const under = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.cellSize, CONFIG.cellSize), new THREE.MeshLambertMaterial({ color: '#222' }));
+                        under.rotation.x = -Math.PI/2; under.position.set(posX, 0.2, posZ); mapGroup.add(under);
                     }
+                } else if (cell.type === 'road') {
+                    let yPos = 0.5;
+                    let mat;
+                    
+                    if (isTextured) {
+                        if (cell.isIntersection && cell.isHighway) mat = roadMaterials.intersection;
+                        else if (cell.isHighway) mat = roadMaterials.highway;
+                        else if (cell.isIntersection) mat = roadMaterials.intersection;
+                        else mat = cell.isHorizontal ? roadMaterials.horizontal : roadMaterials.vertical;
+                    } else {
+
+                        let color = CONFIG.colors.road; if (cell.isHighway) color = CONFIG.colors.highway; mat = new THREE.MeshLambertMaterial({ color: color });
+                    }
+
+                    if (cell.isElevated) yPos = CONFIG.elevationHeight; 
+                    else if (cell.isBridge) yPos = CONFIG.bridgeHeight; 
+
+                    else if (cell.isRamp) { const step = CONFIG.elevationHeight / 5; yPos = CONFIG.elevationHeight - (cell.rampLevel * step); }
+                    else if (cell.isBridgeRamp) yPos = (cell.rampTargetHeight + 0.5) / 2;
+
+                    const mesh = new THREE.Mesh(new THREE.BoxGeometry(CONFIG.cellSize, 1, CONFIG.cellSize), mat);
+                    
+                    if (cell.isBridgeRamp && cell.rampDir) {
+                        const targetH = cell.rampTargetHeight || CONFIG.bridgeHeight;
+                        const diff = targetH - 0.5;
+                        const angle = Math.atan(diff / CONFIG.cellSize);
+                        const len = Math.sqrt(diff*diff + CONFIG.cellSize*CONFIG.cellSize);
+                        const scale = (len / CONFIG.cellSize) * 1.1; 
+
+                        if(cell.rampDir.dx === 1) { mesh.rotation.z = angle; mesh.scale.set(scale, 1, 1); }
+                        else if(cell.rampDir.dx === -1) { mesh.rotation.z = -angle; mesh.scale.set(scale, 1, 1); }
+                        else if(cell.rampDir.dz === 1) { mesh.rotation.x = -angle; mesh.scale.set(1, 1, scale); }
+                        else if(cell.rampDir.dz === -1) { mesh.rotation.x = angle; mesh.scale.set(1, 1, scale); }
+                    }
+                    
+                    if (isTextured && cell.isHighway && !cell.isIntersection) {
+                        const section = cell.highwaySection; const side = cell.highwaySide;
+                        if (section === 'top' && side === 'outer') mesh.rotation.y = Math.PI; 
+                        else if (section === 'bottom' && side === 'inner') mesh.rotation.y = Math.PI;
+
+                        else if (section === 'left') { if (side === 'outer') mesh.rotation.y = -Math.PI / 2; if (side === 'inner') mesh.rotation.y = Math.PI / 2; }
+
+                        else if (section === 'right') { if (side === 'inner') mesh.rotation.y = -Math.PI / 2; if (side === 'outer') mesh.rotation.y = Math.PI / 2; }
+                    }
+
+
+                    mesh.position.set(posX, yPos, posZ); mesh.receiveShadow = true; mesh.castShadow = cell.isElevated || cell.isBridge; mapGroup.add(mesh);
+
+
+                    if (cell.isElevated && (cell.isBridge || (x%3===0 && z%3===0))) { const pillar = new THREE.Mesh(pillarGeo, pillarMat); pillar.position.set(posX, CONFIG.elevationHeight/2, posZ); mapGroup.add(pillar); }
+                    if (cell.isBridge && !cell.isElevated) {
+                        const p = new THREE.Mesh(bridgePillarGeo, pillarMat); p.position.set(posX, 0, posZ); mapGroup.add(p);
+
+                        if (cell.isIntersection) { const cp = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 4, 8), pillarMat); for(let dx of [-3, 3]) for(let dz of [-3, 3]) { const c = cp.clone(); c.position.set(posX + dx, 0, posZ + dz); mapGroup.add(c); } }
+                    }
+
+                    if (cell.isRamp) { const h = yPos; const p = new THREE.Mesh(new THREE.CylinderGeometry(1,1, h, 8), pillarMat); p.position.set(posX, h/2, posZ); mapGroup.add(p); }
+                    if (cell.stopLineDir) {
+
+                        const line = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.cellSize * 0.15, CONFIG.cellSize * 0.8), stopLineMat); line.rotation.x = -Math.PI/2;
+
+                        if (cell.stopLineDir.dx !== 0) { line.rotation.z = 0; line.position.set(posX + (CONFIG.cellSize/2-1)*cell.stopLineDir.dx, yPos + 0.05, posZ); } 
+
+                        else { line.rotation.z = Math.PI/2; line.position.set(posX, yPos + 0.05, posZ + (CONFIG.cellSize/2-1)*cell.stopLineDir.dz); }
+                        mapGroup.add(line);
+                    }
+                    if (cell.hasUnderpass) {
+
+                        const under = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.cellSize, CONFIG.cellSize), new THREE.MeshLambertMaterial({ color: '#222' }));
+                        under.rotation.x = -Math.PI/2; under.position.set(posX, 0.2, posZ); mapGroup.add(under);
+                    }
+                } else if (cell.type === 'carpark') {
+
+                    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.cellSize*0.9, CONFIG.cellSize*0.9), new THREE.MeshLambertMaterial({ color: CONFIG.colors.carpark })); mesh.rotation.x = -Math.PI/2; mesh.position.set(posX, 0.2, posZ); mapGroup.add(mesh);
+
+                    const lGeo = new THREE.PlaneGeometry(CONFIG.cellSize*0.05, CONFIG.cellSize*0.6); const lMat = new THREE.MeshBasicMaterial({ color: CONFIG.colors.carparkLine });
+
+                    const l1 = new THREE.Mesh(lGeo, lMat); l1.rotation.x = -Math.PI/2; l1.position.set(posX-2, 0.25, posZ); mapGroup.add(l1);
+
+                    const l2 = new THREE.Mesh(lGeo, lMat); l2.rotation.x = -Math.PI/2; l2.position.set(posX+2, 0.25, posZ); mapGroup.add(l2);
+                } else if (cell.type === 'path') {
+
+                    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.cellSize*0.6, CONFIG.cellSize*0.6), new THREE.MeshBasicMaterial({ color: CONFIG.colors.path })); mesh.rotation.x = -Math.PI/2; mesh.position.set(posX, 0.2, posZ); mapGroup.add(mesh);
+                } else if (cell.type === 'water') {
+
+                    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CONFIG.cellSize, CONFIG.cellSize), new THREE.MeshBasicMaterial({ color: CONFIG.colors.water })); mesh.rotation.x = -Math.PI/2; mesh.position.set(posX, 0.2, posZ); mapGroup.add(mesh);
                 }
             }
-            scene.add(mapGroup);
         }
 
-        // --- MAIN ---
-        function init() {
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x87CEEB);
-            scene.fog = new THREE.Fog(0x87CEEB, 50, 500);
+        const player = new THREE.Sprite(new THREE.SpriteMaterial({ map: textures.player, depthTest: false })); player.scale.set(40, 40, 1); player.position.set(0, 100, 0); player.renderOrder = 999; iconGroup.add(player);
 
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 100, 100);
+        const home = new THREE.Sprite(new THREE.SpriteMaterial({ map: textures.home, depthTest: false })); home.scale.set(30, 30, 1); home.position.set(80, 80, 80); iconGroup.add(home);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.shadowMap.enabled = true;
-            document.getElementById('canvas-container').appendChild(renderer.domElement);
+        const mission = new THREE.Sprite(new THREE.SpriteMaterial({ map: textures.mission, depthTest: false })); mission.scale.set(30, 30, 1); mission.position.set(-150, 80, -150); iconGroup.add(mission);
 
-            controls = new OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
+        document.getElementById('legend-container').innerHTML = `
+            <div class="legend-item"><div class="dot" style="background:#555"></div> Highway</div>
+            <div class="legend-item"><div class="dot" style="background:#2d5a27"></div> Median</div>
 
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-            scene.add(ambientLight);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-            dirLight.position.set(100, 200, 100);
-            dirLight.castShadow = true;
-            scene.add(dirLight);
+            <div class="legend-item"><div class="dot" style="background:#555; border: 1px solid yellow"></div> Bridge</div>
+            <div class="legend-item"><div class="dot" style="background:#888"></div> Ramp</div>
+            <div class="legend-item"><div class="dot" style="background:#CCC"></div> Street</div>
+        `;
+        document.getElementById('minimap-ui').style.display = 'block';
+        controls.enableRotate = true; controls.maxPolarAngle = Math.PI / 3; 
+    }
 
-            generateCityData();
-            renderMap();
+    function setStage(stage) {
+        currentStage = stage;
+        clearMap();
+        document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        document.getElementById('btn-stage' + stage).classList.add('active');
+        if(stage === 1) renderStage1();
+        else if(stage === 2) renderStage2();
+        else if(stage === 3) renderPolishStage(false);
+        else if(stage === 4) renderPolishStage(true);
+    }
 
-            // Interactions
-            window.addEventListener('resize', onWindowResize);
-            renderer.domElement.addEventListener('click', onCanvasClick);
+    function onWindowResize() {
+        const aspect = window.innerWidth / window.innerHeight;
+        const frustumSize = 900;
+        camera.left = -frustumSize * aspect / 2;
+        camera.right = frustumSize * aspect / 2;
+        camera.top = frustumSize / 2;
+        camera.bottom = -frustumSize / 2;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
 
-            // Global functions for UI
-            window.setMode = (mode) => {
-                currentMode = mode;
-                document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-                if(mode === 'draw') {
-                    document.getElementById('btn-draw').classList.add('active');
-                    document.getElementById('instruction-text').innerText = "Click on the map to place a random car.";
-                    controls.enabled = false; // Disable orbit to prevent camera moving while clicking
-                } else {
-                    document.getElementById('btn-view').classList.add('active');
-                    document.getElementById('instruction-text').innerText = "Drag to rotate, Scroll to zoom.";
-                    controls.enabled = true;
-                }
-            };
-
-            window.regenerateMap = () => {
-                generateCityData();
-                renderMap();
-            };
-
-            // Start in draw mode but allow camera control via right click ideally?
-            // For now, simpler to separate modes or use Shift+Click.
-            // Let's allow orbit in draw mode but clicking also places.
-            controls.enabled = true;
-            window.setMode('draw');
-
-            animate();
-        }
-
-        function onCanvasClick(event) {
-            if (currentMode !== 'draw') return;
-
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-            raycaster.setFromCamera(mouse, camera);
-            // Raycast against everything in mapGroup
-            const intersects = raycaster.intersectObjects(mapGroup.children, true);
-
-            if (intersects.length > 0) {
-                const point = intersects[0].point;
-                // Spawn Car
-                const color = Math.random() * 0xffffff;
-                const car = createCar([point.x, point.y, point.z], color);
-                // Align random
-                car.rotation.y = Math.random() * Math.PI * 2;
-                scene.add(car);
+    function animate() {
+        requestAnimationFrame(animate);
+        if(currentStage >= 3) {
+            const time = Date.now() * 0.005;
+            const player = iconGroup.children[0];
+            if(player) {
+                const scale = 40 + Math.sin(time) * 2;
+                player.scale.set(scale, scale, 1);
             }
         }
+        controls.update();
+        renderer.render(scene, camera);
+    }
 
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-            controls.update();
-            renderer.render(scene, camera);
-        }
-
-        init();
-    </script>
+    init();
+</script>
 </body>
 </html>
