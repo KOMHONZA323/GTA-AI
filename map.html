@@ -657,12 +657,52 @@
         createDetailedCar();
         setupInputs();
 
-        // Position car at center
-        carGroup.position.set(0, 10, 0);
+        // Find a spawn point on a road
+        findSpawnPoint();
 
         window.addEventListener('resize', onWindowResize, false);
         animate();
         console.log("Initialization complete.");
+    }
+
+    function findSpawnPoint() {
+        // Iterate through cityData to find a valid road
+        const size = CONFIG.gridSize;
+        const center = Math.floor(size / 2);
+
+        // Search spirally or just linearly near center
+        // We scan a 40x40 area around center
+        for(let r = 0; r < 20; r++) {
+            // Simple concentric box search
+            for(let x = center - r; x <= center + r; x++) {
+                for(let z = center - r; z <= center + r; z++) {
+                    if(x >= 0 && x < size && z >= 0 && z < size) {
+                        const cell = cityData[x][z];
+                        // Prefer standard roads, not elevated/ramps for initial spawn
+                        if(cell.type === 'road' && !cell.isElevated && !cell.isBridge && !cell.isRamp) {
+
+                            const worldX = (x - size/2) * CONFIG.cellSize;
+                            const worldZ = (z - size/2) * CONFIG.cellSize;
+
+                            carGroup.position.set(worldX, 0.5, worldZ);
+
+                            // Align car to road direction
+                            if(cell.isHorizontal) {
+                                carGroup.rotation.y = Math.PI / 2; // Face East/West
+                            } else {
+                                carGroup.rotation.y = 0; // Face North/South
+                            }
+
+                            console.log(`Spawned car at ${worldX}, ${worldZ} on road type: ${cell.type}`);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback
+        console.warn("No suitable spawn point found, using default.");
+        carGroup.position.set(0, 10, 0);
     }
 
     // --- CAR CREATION ---
@@ -1003,7 +1043,9 @@
         }
 
         // Steering
-        carGroup.rotation.y += carState.steering * carState.speed * 0.02 * dt;
+        // Steering sensitivity increases with speed slightly, but dampened
+        const steerSpeed = Math.min(Math.abs(carState.speed), 10) / 10;
+        carGroup.rotation.y += carState.steering * steerSpeed * 1.5 * dt;
 
         updateHUD(acceleration, dragForce, weightTransfer);
     }
@@ -1085,14 +1127,24 @@
         chassis.rotation.x = carState.bodyPitch;
         chassis.rotation.z = -carState.steering * carState.speed * 0.02;
 
-        // Camera Follow
-        const offset = new THREE.Vector3(0, 15, -25); // Behind and above
-        offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), carGroup.rotation.y);
+        // Camera Follow (Chase Cam)
+        // Position relative to car: behind and slightly above
+        const relativeOffset = new THREE.Vector3(0, 6, -12);
 
-        const targetPos = carGroup.position.clone().add(offset);
-        camera.position.lerp(targetPos, 0.1);
+        // Apply car's rotation to the offset
+        const cameraOffset = relativeOffset.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), carGroup.rotation.y);
 
-        const lookAtPos = carGroup.position.clone().add(new THREE.Vector3(0, 2, 0));
+        // Target position for the camera
+        const targetCamPos = carGroup.position.clone().add(cameraOffset);
+
+        // Lerp camera position for smoothness
+        camera.position.lerp(targetCamPos, 0.1);
+
+        // Look at a point slightly ahead of the car
+        const relativeLookAt = new THREE.Vector3(0, 2, 10);
+        const lookAtOffset = relativeLookAt.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), carGroup.rotation.y);
+        const lookAtPos = carGroup.position.clone().add(lookAtOffset);
+
         camera.lookAt(lookAtPos);
     }
 
