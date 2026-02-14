@@ -1574,6 +1574,16 @@
         const btn = document.getElementById('btn-stage' + stage);
         if(btn) btn.classList.add('active');
 
+        if(stage < 3) {
+            controls.enabled = true;
+            // Reset Camera to Bird's Eye View for editing
+            camera.position.set(0, 200, 200);
+            camera.lookAt(0, 0, 0);
+            controls.target.set(0, 0, 0);
+        } else {
+            controls.enabled = false;
+        }
+
         if(stage === 1) renderStage1();
         else if(stage === 2) renderStage2();
         else if(stage === 3) renderPolishStage(false);
@@ -1596,9 +1606,11 @@
         if(currentStage >= 3) {
             updatePhysics(dt);
             updateVisuals();
+        } else {
+            // Only update OrbitControls when NOT driving (Stage 1 or 2)
+            controls.update();
         }
 
-        controls.update();
         renderer.render(scene, camera);
     }
 
