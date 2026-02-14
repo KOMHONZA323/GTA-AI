@@ -943,7 +943,11 @@
             }
             if (cell.isBridge) return CONFIG.bridgeHeight;
 
-            return 0; // Ground level
+            // Road height fix: Standard roads are BoxGeometry(h=1) at y=0.5, so top is y=1.0
+            if (cell.type === 'road') return 1.0;
+            if (cell.type === 'carpark' || cell.type === 'path' || cell.type === 'water') return 0.2;
+
+            return 0; // Grass / Ground level
         }
         return 0; // Default ground
     }
@@ -1129,7 +1133,8 @@
 
         // Camera Follow (Chase Cam)
         // Position relative to car: behind and slightly above
-        const relativeOffset = new THREE.Vector3(0, 6, -12);
+        // Use a slightly closer and lower camera for better immersion
+        const relativeOffset = new THREE.Vector3(0, 5.5, -11);
 
         // Apply car's rotation to the offset
         const cameraOffset = relativeOffset.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), carGroup.rotation.y);
@@ -1137,11 +1142,11 @@
         // Target position for the camera
         const targetCamPos = carGroup.position.clone().add(cameraOffset);
 
-        // Lerp camera position for smoothness
-        camera.position.lerp(targetCamPos, 0.1);
+        // Lerp camera position for smoothness (increased from 0.1 for less lag)
+        camera.position.lerp(targetCamPos, 0.15);
 
-        // Look at a point slightly ahead of the car
-        const relativeLookAt = new THREE.Vector3(0, 2, 10);
+        // Look at a point slightly ahead of the car to anticipate turns
+        const relativeLookAt = new THREE.Vector3(0, 1.5, 8);
         const lookAtOffset = relativeLookAt.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), carGroup.rotation.y);
         const lookAtPos = carGroup.position.clone().add(lookAtOffset);
 
