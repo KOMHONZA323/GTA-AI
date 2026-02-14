@@ -191,17 +191,41 @@
             return group;
         }
 
-        function createRoadSegment(position, width, length, isHighway) {
+        function createRoadSegment(position, width, length, isHighway, rotation = 0) {
             const group = new THREE.Group();
             const color = isHighway ? 0x555555 : 0x2c3e50;
-            const geo = new THREE.PlaneGeometry(length, width);
-            const mat = createMaterial(color, { roughness: 0.9 });
-            const mesh = new THREE.Mesh(geo, mat);
-            mesh.rotation.x = -Math.PI / 2;
-            mesh.receiveShadow = true;
-            group.add(mesh);
 
-            if (!isHighway) {
+            let mesh;
+
+            if (isHighway) {
+                // Thicker Highway (Box)
+                const thickness = 2;
+                const geo = new THREE.BoxGeometry(length, thickness, width);
+                const mat = createMaterial(color, { roughness: 0.9 });
+                mesh = new THREE.Mesh(geo, mat);
+                // Box center is 0,0,0. Top is y=thickness/2.
+                // We want top to be at y=0 (relative to group, flush with elevation)
+                mesh.position.y = -thickness / 2;
+
+                // Lines for Highway (White)
+                const lineMat = createMaterial(0xffffff);
+                const lineGeo = new THREE.PlaneGeometry(length, 0.2);
+
+                // Add two lane dividers
+                [-3.5, 3.5].forEach(z => {
+                    const line = new THREE.Mesh(lineGeo, lineMat);
+                    line.rotation.x = -Math.PI / 2;
+                    line.position.set(0, 0.02, z); // Slightly above 0
+                    group.add(line);
+                });
+            } else {
+                // Standard Road (Plane)
+                const geo = new THREE.PlaneGeometry(length, width);
+                const mat = createMaterial(color, { roughness: 0.9 });
+                mesh = new THREE.Mesh(geo, mat);
+                mesh.rotation.x = -Math.PI / 2;
+
+                // Center Line (Yellow)
                 const lineGeo = new THREE.PlaneGeometry(length * 0.6, 0.15);
                 const lineMat = createMaterial(0xf1c40f);
                 const line = new THREE.Mesh(lineGeo, lineMat);
@@ -209,7 +233,11 @@
                 line.position.set(0, 0.01, 0);
                 group.add(line);
             }
+
+            mesh.receiveShadow = true;
+            group.add(mesh);
             group.position.set(...position);
+            group.rotation.y = rotation;
             return group;
         }
 
@@ -320,7 +348,18 @@
                     const pz = (z - CONFIG.gridSize / 2) * CONFIG.cellSize;
 
                     if (cell.type === 'road') {
-                         const road = createRoadSegment([px, 0.05, pz], CONFIG.cellSize, CONFIG.cellSize, cell.isHighway);
+                         // Check neighbors for rotation
+                         const nN = (z > 0) && (cityData[x][z-1].type === 'road');
+                         const nS = (z < CONFIG.gridSize-1) && (cityData[x][z+1].type === 'road');
+                         const nE = (x < CONFIG.gridSize-1) && (cityData[x+1][z].type === 'road');
+                         const nW = (x > 0) && (cityData[x-1][z].type === 'road');
+
+                         let rotation = 0;
+                         if ((nN || nS) && !(nE || nW)) {
+                             rotation = Math.PI / 2;
+                         }
+
+                         const road = createRoadSegment([px, 0.05, pz], CONFIG.cellSize, CONFIG.cellSize, cell.isHighway, rotation);
                          if (cell.isElevated) {
                              road.position.y = CONFIG.elevationHeight;
                              const pillar = new THREE.Mesh(
