@@ -1145,10 +1145,17 @@
         // Lerp camera position for smoothness (increased from 0.1 for less lag)
         camera.position.lerp(targetCamPos, 0.15);
 
-        // Look at a point slightly ahead of the car to anticipate turns
-        const relativeLookAt = new THREE.Vector3(0, 1.5, 8);
+        // Look at the car itself (or slightly above for framing)
+        // Lock camera rotation to the car's direction more tightly
+        const relativeLookAt = new THREE.Vector3(0, 1.5, 0);
         const lookAtOffset = relativeLookAt.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), carGroup.rotation.y);
         const lookAtPos = carGroup.position.clone().add(lookAtOffset);
+
+        // However, to see "ahead", we might want the camera to be *positioned* relative to the car,
+        // but *look* at a point further down the road, OR just rigidly follow.
+        // User says "lock on the car not on the midle". This likely means "don't let the car drift to the edge of the screen when turning".
+        // The previous code looked *ahead* (z=8), which makes the car slide to the side during turns.
+        // By looking at z=0 (the car itself), the car stays centered horizontally.
 
         camera.lookAt(lookAtPos);
     }
@@ -1567,6 +1574,16 @@
         const btn = document.getElementById('btn-stage' + stage);
         if(btn) btn.classList.add('active');
 
+        if(stage < 3) {
+            controls.enabled = true;
+            // Reset Camera to Bird's Eye View for editing
+            camera.position.set(0, 200, 200);
+            camera.lookAt(0, 0, 0);
+            controls.target.set(0, 0, 0);
+        } else {
+            controls.enabled = false;
+        }
+
         if(stage === 1) renderStage1();
         else if(stage === 2) renderStage2();
         else if(stage === 3) renderPolishStage(false);
@@ -1589,9 +1606,11 @@
         if(currentStage >= 3) {
             updatePhysics(dt);
             updateVisuals();
+        } else {
+            // Only update OrbitControls when NOT driving (Stage 1 or 2)
+            controls.update();
         }
 
-        controls.update();
         renderer.render(scene, camera);
     }
 
